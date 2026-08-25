@@ -115,13 +115,14 @@ jobs:
       - name: Start backend
         working-directory: backend
         run: |
-          nohup env ASPNETCORE_URLS=http://localhost:5080 dotnet run --project src/Conduit/Conduit.csproj \
+          nohup env ASPNETCORE_URLS=http://localhost:5080 \
+            dotnet run --no-launch-profile --project src/Conduit/Conduit.csproj \
             > "${RUNNER_TEMP}/backend.log" 2>&1 &
           echo $! > "${RUNNER_TEMP}/backend.pid"
 
       - name: Wait for backend
         run: |
-          for i in $(seq 1 60); do
+          for i in $(seq 1 90); do
             if curl -fsS http://localhost:5080/api/tags >/dev/null; then
               exit 0
             fi
@@ -133,6 +134,9 @@ jobs:
 
       - name: Start frontend
         working-directory: frontend
+        env:
+          API_URL: http://localhost:5080/api
+          PORT: '30401'
         run: |
           nohup yarn start > "${RUNNER_TEMP}/frontend.log" 2>&1 &
           echo $! > "${RUNNER_TEMP}/frontend.pid"
