@@ -1,6 +1,6 @@
 # Example app e2e
 
-End-to-end tests for the private RealWorld (Conduit) demo app. Pair this repository with:
+End-to-end tests for the private RealWorld (Conduit) demo app. Playwright covers the critical UI journeys (auth, articles, comments, follow/feed, favorite, settings, tags, guest gates, 404). Pair this repository with:
 
 - Frontend: [example-app-frontend](https://github.com/12masta/example-app-frontend)
 - Backend API: [example-app-backend](https://github.com/12masta/example-app-backend)
@@ -36,7 +36,9 @@ npx playwright install chromium
 npm test
 ```
 
-Optional: copy `.env.example` to `.env` or set `BASE_URL`. The default is `http://localhost:30401`.
+Optional: copy `.env.example` to `.env` or set `BASE_URL` / `API_URL`. Defaults are `http://localhost:30401` and `http://localhost:5080/api`.
+
+Tests that are not about registration use a precreated API user. Tests that are not about login authenticate with a JWT prehook instead of the login form.
 
 ```sh
 npm run test:ui

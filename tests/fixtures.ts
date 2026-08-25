@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test as base, type Page } from '@playwright/test';
+import { createUser, type CreatedUser } from './helpers/api';
+import { injectAuthToken } from './helpers/auth';
 
 const collectJsCoverage = process.env.E2E_JS_COVERAGE === '1';
 
@@ -9,6 +11,12 @@ type CoverageRecord = {
   source: string | undefined;
   sourceMap: string | undefined;
   functions: unknown;
+};
+
+type Fixtures = {
+  testUser: CreatedUser;
+  authedUser: CreatedUser;
+  injectAuth: (token: string) => Promise<void>;
 };
 
 async function sourceMapFor(url: string, source: string | undefined): Promise<string | undefined> {
@@ -43,7 +51,7 @@ async function recordsFrom(entries: Awaited<ReturnType<Page['coverage']['stopJSC
   return records;
 }
 
-export const test = base.extend({
+export const test = base.extend<Fixtures>({
   page: async ({ page }, use) => {
     const harvested: CoverageRecord[] = [];
     let coverageRunning = false;
@@ -89,6 +97,19 @@ export const test = base.extend({
         fs.writeFileSync(out, JSON.stringify(harvested, null, 2));
       }
     }
+  },
+  testUser: async ({ request }, use) => {
+    await use(await createUser(request));
+  },
+  injectAuth: async ({ page }, use) => {
+    await use(async (token: string) => {
+      await injectAuthToken(page, token);
+    });
+  },
+  authedUser: async ({ page, request }, use) => {
+    const user = await createUser(request);
+    await injectAuthToken(page, user.token);
+    await use(user);
   },
 });
 
