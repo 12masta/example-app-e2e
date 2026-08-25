@@ -1,0 +1,166 @@
+name: E2E
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      frontend_ref:
+        description: Frontend git ref to test
+        type: string
+        required: false
+        default: main
+      backend_ref:
+        description: Backend git ref to test
+        type: string
+        required: false
+        default: main
+      e2e_ref:
+        description: E2E git ref to test
+        type: string
+        required: false
+        default: main
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  playwright:
+    name: Playwright critical path
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Resolve refs
+        id: refs
+        env:
+          FRONTEND_REF: ${{ inputs.frontend_ref || 'main' }}
+          BACKEND_REF: ${{ inputs.backend_ref || 'main' }}
+          E2E_REF: ${{ inputs.e2e_ref || 'main' }}
+        run: |
+          if [ "${GITHUB_REPOSITORY}" = "12masta/example-app-e2e" ]; then
+            echo "e2e=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          else
+            echo "e2e=${E2E_REF}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "frontend=${FRONTEND_REF}" >> "$GITHUB_OUTPUT"
+          echo "backend=${BACKEND_REF}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout e2e tests
+        uses: actions/checkout@v7
+        with:
+          repository: 12masta/example-app-e2e
+          ref: ${{ steps.refs.outputs.e2e }}
+          path: e2e
+
+      - name: Checkout frontend
+        uses: actions/checkout@v7
+        with:
+          repository: 12masta/example-app-frontend
+          ref: ${{ steps.refs.outputs.frontend }}
+          path: frontend
+
+      - name: Checkout backend
+        uses: actions/checkout@v7
+        with:
+          repository: 12masta/example-app-backend
+          ref: ${{ steps.refs.outputs.backend }}
+          path: backend
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Setup Node.js yarn cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.302
+
+      - name: Install e2e dependencies
+        working-directory: e2e
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        env:
+          HUSKY: '0'
+        run: yarn install --frozen-lockfile
+
+      - name: Generate frontend API client
+        working-directory: frontend
+        run: yarn generate
+
+      - name: Start backend
+        working-directory: backend
+        run: |
+          nohup env ASPNETCORE_URLS=http://localhost:5080 \
+            dotnet run --no-launch-profile --project src/Conduit/Conduit.csproj \
+            > "${RUNNER_TEMP}/backend.log" 2>&1 &
+          echo $! > "${RUNNER_TEMP}/backend.pid"
+
+      - name: Wait for backend
+        run: |
+          for i in $(seq 1 90); do
+            if curl -fsS http://localhost:5080/api/tags >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Backend did not become ready"
+          cat "${RUNNER_TEMP}/backend.log"
+          exit 1
+
+      - name: Start frontend
+        working-directory: frontend
+        env:
+          API_URL: http://localhost:5080/api
+          PORT: '30401'
+        run: |
+          nohup yarn start > "${RUNNER_TEMP}/frontend.log" 2>&1 &
+          echo $! > "${RUNNER_TEMP}/frontend.pid"
+
+      - name: Wait for frontend
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:30401 >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Frontend did not become ready"
+          cat "${RUNNER_TEMP}/frontend.log"
+          exit 1
+
+      - name: Run Playwright tests
+        working-directory: e2e
+        run: npx playwright test
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+          retention-days: 7
