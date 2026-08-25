@@ -1,6 +1,6 @@
 import { expect, test } from './fixtures';
 import { createArticle, createUser } from './helpers/api';
-import { waitForApiPost } from './helpers/network';
+import { waitForApi, waitForApiPost } from './helpers/network';
 import { ArticlePage } from './pom/article.page';
 import { HomePage } from './pom/home.page';
 import { ProfilePage } from './pom/profile.page';
@@ -24,6 +24,7 @@ test('follow an author and see their article on Your Feed', async ({ page, reque
 
   await home.goto();
   await home.openYourFeed();
+  await expect(page).toHaveURL(/[?&]feed=personal(?:&|$)/);
   await expect(home.articlePreview(article.title)).toBeVisible();
 });
 
@@ -42,22 +43,15 @@ test('favorite an article and see it on Favorited Articles', async ({ page, requ
 
   await profile.goto(reader.username);
   await profile.openFavoritedArticles();
+  await expect(page).toHaveURL(new RegExp(`[?&]favorited=${reader.username}(?:&|$)`));
   await expect(profile.articlePreview(article.title)).toBeVisible();
 
   await articlePage.goto(article.slug);
-  await Promise.all([
-    page.waitForResponse(
-      (response) =>
-        response.request().method() === 'DELETE' &&
-        response.url().includes(`/articles/${article.slug}/favorite`) &&
-        response.status() >= 200 &&
-        response.status() < 300,
-    ),
-    articlePage.unfavorite(),
-  ]);
+  await Promise.all([waitForApi(page, 'DELETE', `/articles/${article.slug}/favorite`), articlePage.unfavorite()]);
   await expect(articlePage.favoriteButton()).toBeVisible();
 
   await profile.goto(reader.username);
   await profile.openFavoritedArticles();
+  await expect(page).toHaveURL(new RegExp(`[?&]favorited=${reader.username}(?:&|$)`));
   await expect(profile.emptyFeed()).toBeVisible();
 });

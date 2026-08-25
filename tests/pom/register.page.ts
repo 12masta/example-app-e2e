@@ -8,7 +8,7 @@ export class RegisterPage {
   }
 
   formErrors() {
-    return this.page.locator('ul.error-messages');
+    return this.page.locator('.auth-page').getByRole('list');
   }
 
   async register(user: { username: string; email: string; password: string }) {

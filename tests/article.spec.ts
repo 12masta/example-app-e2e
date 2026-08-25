@@ -30,6 +30,7 @@ test('delete own article and it is no longer readable', async ({ page, request, 
   await articlePage.goto(existing.slug);
   await articlePage.deleteArticle();
   await expectPathname(page, '/');
+  await home.waitForFeedSettled();
   await expect(home.articlePreview(existing.title)).toHaveCount(0);
 
   await articlePage.goto(existing.slug);

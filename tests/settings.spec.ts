@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures';
+import { waitForApi } from './helpers/network';
 import { uniqueId } from './helpers/unique';
 import { Layout } from './pom/layout';
 import { ProfilePage } from './pom/profile.page';
@@ -11,8 +12,7 @@ test('update bio in settings and see it on the profile', async ({ page, authedUs
   const layout = new Layout(page);
 
   await settings.goto();
-  await settings.updateBio(bio);
-  await expect(page).toHaveURL(/\/settings$/);
+  await Promise.all([waitForApi(page, 'PUT', '/user'), settings.updateBio(bio)]);
 
   await layout.userLink(authedUser.username).click();
   await expect(page).toHaveURL(new RegExp(`/profile/${authedUser.username}`));

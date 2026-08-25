@@ -51,8 +51,7 @@ test('login with the wrong password shows authentication expired', async ({ page
   await expect(page.getByRole('link', { name: 'Go to login' })).toBeVisible();
 });
 
-test('logout from a prehook session returns to guest nav', async ({ page, authedUser }) => {
-  void authedUser;
+test('logout from a prehook session returns to guest nav', async ({ page, authedUser: _authedUser }) => {
   const settings = new SettingsPage(page);
   const layout = new Layout(page);
 

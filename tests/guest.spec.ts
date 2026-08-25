@@ -14,8 +14,7 @@ test('guest visiting editor and settings is sent to login', async ({ page }) => 
   await expect(page).toHaveURL(/\/login$/);
 });
 
-test('authenticated user visiting login and register is sent home', async ({ page, authedUser }) => {
-  void authedUser;
+test('authenticated user visiting login and register is sent home', async ({ page, authedUser: _authedUser }) => {
   const loginPage = new LoginPage(page);
 
   await loginPage.goto();

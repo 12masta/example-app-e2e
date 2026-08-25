@@ -1,14 +1,22 @@
 import type { Page, Response } from '@playwright/test';
 
-function isSuccessfulApiPost(response: Response, pathSnippet: string) {
-  return (
-    response.request().method() === 'POST' &&
-    response.url().includes(pathSnippet) &&
-    response.status() >= 200 &&
-    response.status() < 300
-  );
+function isSuccessfulApiResponse(response: Response, method: string, pathSnippet: string) {
+  if (response.request().method() !== method) {
+    return false;
+  }
+
+  if (response.status() < 200 || response.status() >= 300) {
+    return false;
+  }
+
+  const pathname = new URL(response.url()).pathname;
+  return pathname.endsWith(pathSnippet);
+}
+
+export async function waitForApi(page: Page, method: string, pathSnippet: string) {
+  return page.waitForResponse((response) => isSuccessfulApiResponse(response, method, pathSnippet));
 }
 
 export async function waitForApiPost(page: Page, pathSnippet: string) {
-  return page.waitForResponse((response) => isSuccessfulApiPost(response, pathSnippet));
+  return waitForApi(page, 'POST', pathSnippet);
 }

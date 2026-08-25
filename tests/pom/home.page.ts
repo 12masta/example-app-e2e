@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 
 export class HomePage {
   constructor(private readonly page: Page) {}
@@ -15,6 +15,10 @@ export class HomePage {
     return this.page.getByText('No articles are here... yet.');
   }
 
+  async waitForFeedSettled() {
+    await expect(this.emptyFeed().or(this.page.getByTestId('article-preview')).first()).toBeVisible();
+  }
+
   yourFeedLink() {
     return this.page.getByRole('link', { name: 'Your Feed' });
   }
@@ -28,6 +32,6 @@ export class HomePage {
   }
 
   async clickPopularTag(tag: string) {
-    await this.page.getByText('Popular Tags').locator('..').getByRole('link', { name: tag, exact: true }).click();
+    await this.page.locator('.sidebar').getByRole('link', { name: tag, exact: true }).click();
   }
 }

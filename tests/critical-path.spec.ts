@@ -3,8 +3,7 @@ import { uniqueArticle } from './helpers/unique';
 import { EditorPage } from './pom/editor.page';
 import { HomePage } from './pom/home.page';
 
-test('publish article, see it on Global Feed', async ({ page, authedUser }) => {
-  void authedUser;
+test('publish article, see it on Global Feed', async ({ page, authedUser: _authedUser }) => {
   const article = uniqueArticle();
   const editor = new EditorPage(page);
   const home = new HomePage(page);
