@@ -34,7 +34,7 @@ concurrency:
 
 jobs:
   playwright:
-    name: Playwright critical path
+    name: Playwright e2e
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -155,6 +155,9 @@ jobs:
 
       - name: Run Playwright tests
         working-directory: e2e
+        env:
+          BASE_URL: http://localhost:30401
+          API_URL: http://localhost:5080/api
         run: npx playwright test
 
       - name: Upload Playwright report
