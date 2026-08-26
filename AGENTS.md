@@ -5,12 +5,27 @@
 - Playwright end-to-end tests for the private RealWorld (Conduit) demo stack.
 - Pair this repository with `example-app-frontend` and `example-app-backend`. Tests do not start those apps.
 - `tests/` contains the Playwright specs. The current critical path is register → publish article → see it on Global Feed.
-- `.github/workflows/e2e.yml` is the reusable GitHub Actions workflow. Frontend and backend call it after merge to `main`.
+- `.github/workflows/e2e.yml` is the reusable GitHub Actions workflow.
+
+Unit coverage is not collected here. Jest lives in the frontend PR pipeline. Coverlet on Mediator slices lives in the backend PR pipeline. Those jobs must not start Playwright.
+
+## E2E workflow modes
+
+The same Playwright specs run in both modes. The difference is how the API process is started.
+
+| Mode | When | API process | JS coverage |
+|------|------|-------------|-------------|
+| Real (`COVERAGE=0`) | Cron 07:00 and 19:00 Europe/Warsaw (CEST), e2e PRs, dispatch with coverage unchecked | `dotnet run` with no collector | Off |
+| Coverage (`COVERAGE=1`) | After application merges to `main` (frontend and backend call this workflow with `coverage: true`), or dispatch with coverage checked | `dotnet-coverage` wraps `dotnet run` | `E2E_JS_COVERAGE=1` |
+
+Set `coverage: true` on `workflow_call` / `workflow_dispatch` to mutate the backend harness. The scheduled runs ignore that flag and always stay real.
 
 Local services (must already be running):
 
 - Frontend: `http://localhost:30401`
 - Backend API: `http://localhost:5080/api`
+
+To collect JS coverage locally against an already running stack: `E2E_JS_COVERAGE=1 npm test`. Map the JSON with `tools/v8-map`. To collect API coverage locally, start the API under `dotnet-coverage` yourself. Do not add a Playwright `webServer`.
 
 ## Toolchain
 
@@ -48,3 +63,4 @@ Start the apps yourself before running tests:
 - Do not add a Playwright `webServer` that starts frontend or backend. Local and CI both assume those processes are already up.
 - Stay on Chromium unless a task explicitly expands the browser matrix.
 - Do not commit Playwright reports, traces, screenshots, or `.env` files.
+- `E2E_JS_COVERAGE=1` is optional. It records Chromium JS coverage for the existing specs. It does not start apps and it does not add journeys.

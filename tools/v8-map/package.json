@@ -1,0 +1,11 @@
+{
+  "name": "e2e-v8-map",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "istanbul-lib-coverage": "^3.2.2",
+    "istanbul-lib-report": "^3.0.1",
+    "istanbul-reports": "^3.1.7",
+    "v8-to-istanbul": "^9.3.0"
+  }
+}
