@@ -5,7 +5,24 @@ on:
   push:
     branches:
       - main
+  schedule:
+    # 07:00 and 19:00 Europe/Warsaw during CEST (UTC+2). Winter CET is one hour later locally.
+    - cron: '0 5 * * *'
+    - cron: '0 17 * * *'
   workflow_dispatch:
+    inputs:
+      coverage:
+        description: Mutate the API harness and collect e2e coverage (COVERAGE=1)
+        type: boolean
+        default: false
+      frontend_ref:
+        description: Frontend git ref
+        type: string
+        default: main
+      backend_ref:
+        description: Backend git ref
+        type: string
+        default: main
   workflow_call:
     inputs:
       frontend_ref:
@@ -23,20 +40,25 @@ on:
         type: string
         required: false
         default: main
+      coverage:
+        description: Mutate the API harness and collect e2e coverage (COVERAGE=1)
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
   actions: write
 
 concurrency:
-  group: e2e-${{ github.workflow }}-${{ github.repository }}-${{ github.ref }}
+  group: e2e-${{ github.workflow }}-${{ github.repository }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
   playwright:
-    name: Playwright critical path
+    name: ${{ (github.event_name != 'schedule' && inputs.coverage) && 'Playwright e2e coverage' || 'Playwright e2e' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Resolve refs
@@ -45,6 +67,7 @@ jobs:
           FRONTEND_REF: ${{ inputs.frontend_ref || 'main' }}
           BACKEND_REF: ${{ inputs.backend_ref || 'main' }}
           E2E_REF: ${{ inputs.e2e_ref || 'main' }}
+          COVERAGE_INPUT: ${{ inputs.coverage }}
         run: |
           if [ "${GITHUB_REPOSITORY}" = "12masta/example-app-e2e" ]; then
             echo "e2e=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
@@ -53,6 +76,11 @@ jobs:
           fi
           echo "frontend=${FRONTEND_REF}" >> "$GITHUB_OUTPUT"
           echo "backend=${BACKEND_REF}" >> "$GITHUB_OUTPUT"
+          COVER=0
+          if [ "${GITHUB_EVENT_NAME}" != "schedule" ] && [ "${COVERAGE_INPUT}" = "true" ]; then
+            COVER=1
+          fi
+          echo "cover=${COVER}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout e2e tests
         uses: actions/checkout@v7
@@ -102,6 +130,11 @@ jobs:
         working-directory: e2e
         run: npx playwright install --with-deps chromium
 
+      - name: Install V8 mapper
+        if: ${{ steps.refs.outputs.cover == '1' && hashFiles('e2e/tools/v8-map/package-lock.json') != '' }}
+        working-directory: e2e/tools/v8-map
+        run: npm ci
+
       - name: Install frontend dependencies
         working-directory: frontend
         env:
@@ -112,13 +145,43 @@ jobs:
         working-directory: frontend
         run: yarn generate
 
-      - name: Start backend
+      - name: Restore and build API
+        if: ${{ steps.refs.outputs.cover == '1' }}
         working-directory: backend
         run: |
-          nohup env ASPNETCORE_URLS=http://localhost:5080 \
-            dotnet run --no-launch-profile --project src/Conduit/Conduit.csproj \
-            > "${RUNNER_TEMP}/backend.log" 2>&1 &
-          echo $! > "${RUNNER_TEMP}/backend.pid"
+          dotnet restore src/Conduit/Conduit.csproj --locked-mode
+          dotnet build src/Conduit/Conduit.csproj -c Release --no-restore
+
+      - name: Install coverage collector
+        if: ${{ steps.refs.outputs.cover == '1' }}
+        run: dotnet tool install --global dotnet-coverage
+
+      - name: Start backend
+        working-directory: backend
+        env:
+          COVER: ${{ steps.refs.outputs.cover }}
+        run: |
+          if [ "$COVER" = "1" ]; then
+            export ASPNETCORE_ENVIRONMENT=Development
+            export ASPNETCORE_URLS=http://localhost:5080
+            export Database__Provider=sqlite
+            export Database__ConnectionString="Filename=${RUNNER_TEMP}/conduit-e2e.db"
+            mkdir -p artifacts/coverage/e2e-api
+            dotnet-coverage collect \
+              --session-id conduit-e2e \
+              --server-mode \
+              --background \
+              --output "${GITHUB_WORKSPACE}/backend/artifacts/coverage/e2e-api/coverage.cobertura.xml" \
+              --output-format cobertura \
+              --include-files "${GITHUB_WORKSPACE}/backend/src/Conduit/bin/Release/net10.0/Conduit.dll"
+            dotnet-coverage connect --background conduit-e2e \
+              "dotnet run --no-launch-profile --no-build -c Release --project src/Conduit/Conduit.csproj"
+          else
+            nohup env ASPNETCORE_URLS=http://localhost:5080 \
+              dotnet run --no-launch-profile --project src/Conduit/Conduit.csproj \
+              > "${RUNNER_TEMP}/backend.log" 2>&1 &
+            echo $! > "${RUNNER_TEMP}/backend.pid"
+          fi
 
       - name: Wait for backend
         run: |
@@ -129,7 +192,9 @@ jobs:
             sleep 2
           done
           echo "Backend did not become ready"
-          cat "${RUNNER_TEMP}/backend.log"
+          if [ -f "${RUNNER_TEMP}/backend.log" ]; then
+            cat "${RUNNER_TEMP}/backend.log"
+          fi
           exit 1
 
       - name: Start frontend
@@ -155,7 +220,44 @@ jobs:
 
       - name: Run Playwright tests
         working-directory: e2e
+        env:
+          BASE_URL: http://localhost:30401
+          API_URL: http://localhost:5080/api
+          E2E_JS_COVERAGE: ${{ steps.refs.outputs.cover }}
         run: npx playwright test
+
+      - name: Stop API coverage session
+        if: ${{ always() && steps.refs.outputs.cover == '1' }}
+        run: dotnet-coverage shutdown conduit-e2e
+
+      - name: Map V8 coverage to lcov
+        if: ${{ steps.refs.outputs.cover == '1' && hashFiles('e2e/tools/v8-map/package-lock.json') != '' }}
+        working-directory: e2e
+        env:
+          E2E_ROOT: ${{ github.workspace }}/e2e
+          FRONTEND_ROOT: ${{ github.workspace }}/frontend
+        run: node tools/v8-map/v8-to-lcov.mjs
+        continue-on-error: true
+
+      - name: Upload e2e API coverage
+        if: ${{ success() && steps.refs.outputs.cover == '1' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-api-cobertura
+          path: backend/artifacts/coverage/e2e-api/coverage.cobertura.xml
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload e2e JS coverage
+        if: ${{ success() && steps.refs.outputs.cover == '1' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-js-lcov
+          path: |
+            e2e/test-results/e2e-js/lcov.info
+            e2e/test-results/e2e-js/raw/v8-coverage.json
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Upload Playwright report
         if: failure()
