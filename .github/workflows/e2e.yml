@@ -230,6 +230,10 @@ jobs:
         if: ${{ always() && steps.refs.outputs.cover == '1' }}
         run: dotnet-coverage shutdown conduit-e2e
 
+      - name: Keep Conduit sources in API coverage
+        if: ${{ success() && steps.refs.outputs.cover == '1' }}
+        run: python3 e2e/tools/cobertura-filter.py backend/artifacts/coverage/e2e-api/coverage.cobertura.xml
+
       - name: Map V8 coverage to lcov
         if: ${{ steps.refs.outputs.cover == '1' && hashFiles('e2e/tools/v8-map/package-lock.json') != '' }}
         working-directory: e2e

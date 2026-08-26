@@ -1,8 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { expect, test as base } from '@playwright/test';
+import { expect, test as base, type Page } from '@playwright/test';
 
 const collectJsCoverage = process.env.E2E_JS_COVERAGE === '1';
+
+type CoverageRecord = {
+  url: string;
+  source: string | undefined;
+  sourceMap: string | undefined;
+  functions: unknown;
+};
 
 async function sourceMapFor(url: string, source: string | undefined): Promise<string | undefined> {
   if (!source) {
@@ -23,31 +30,63 @@ async function sourceMapFor(url: string, source: string | undefined): Promise<st
   }
 }
 
+async function recordsFrom(entries: Awaited<ReturnType<Page['coverage']['stopJSCoverage']>>): Promise<CoverageRecord[]> {
+  const records: CoverageRecord[] = [];
+  for (const entry of entries) {
+    records.push({
+      url: entry.url,
+      source: entry.source,
+      sourceMap: await sourceMapFor(entry.url, entry.source),
+      functions: entry.functions,
+    });
+  }
+  return records;
+}
+
 export const test = base.extend({
   page: async ({ page }, use) => {
+    const harvested: CoverageRecord[] = [];
+    let coverageRunning = false;
+
+    async function startCoverage() {
+      await page.coverage.startJSCoverage({ resetOnNavigation: false, reportAnonymousScripts: true });
+      coverageRunning = true;
+    }
+
+    async function harvest() {
+      if (!coverageRunning) {
+        return;
+      }
+      coverageRunning = false;
+      const entries = await page.coverage.stopJSCoverage();
+      harvested.push(...(await recordsFrom(entries)));
+    }
+
     if (collectJsCoverage) {
-      await page.coverage.startJSCoverage({ resetOnNavigation: false });
+      await startCoverage();
+      const originalGoto = page.goto.bind(page);
+      const originalReload = page.reload.bind(page);
+      page.goto = async (url, options) => {
+        await harvest();
+        await startCoverage();
+        return originalGoto(url, options);
+      };
+      page.reload = async options => {
+        await harvest();
+        await startCoverage();
+        return originalReload(options);
+      };
     }
 
     try {
       await use(page);
     } finally {
       if (collectJsCoverage) {
-        const entries = await page.coverage.stopJSCoverage();
-        const records = [];
-        for (const entry of entries) {
-          records.push({
-            url: entry.url,
-            source: entry.source,
-            sourceMap: await sourceMapFor(entry.url, entry.source),
-            functions: entry.functions,
-          });
-        }
-
+        await harvest();
         const out =
           process.env.V8_RAW ?? path.join(process.cwd(), 'test-results/e2e-js/raw/v8-coverage.json');
         fs.mkdirSync(path.dirname(out), { recursive: true });
-        fs.writeFileSync(out, JSON.stringify(records, null, 2));
+        fs.writeFileSync(out, JSON.stringify(harvested, null, 2));
       }
     }
   },
