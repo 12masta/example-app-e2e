@@ -48,3 +48,4 @@ Start the apps yourself before running tests:
 - Do not add a Playwright `webServer` that starts frontend or backend. Local and CI both assume those processes are already up.
 - Stay on Chromium unless a task explicitly expands the browser matrix.
 - Do not commit Playwright reports, traces, screenshots, or `.env` files.
+- `E2E_JS_COVERAGE=1` is optional. It records Chromium JS coverage for the existing specs. It does not start apps and it does not add journeys. Map the JSON with `tools/v8-map`.
