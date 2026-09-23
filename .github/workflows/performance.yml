@@ -31,6 +31,9 @@ jobs:
     name: k6 performance smoke
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      AGENT_HUB_DISPATCH_URL: ${{ secrets.AGENT_HUB_DISPATCH_URL }}
+      DISPATCH_KEY: ${{ secrets.DISPATCH_KEY }}
 
     steps:
       - name: Resolve refs
@@ -219,10 +222,7 @@ jobs:
           retention-days: 14
 
       - name: Dispatch Performance Test Analysis
-        if: ${{ always() && secrets.AGENT_HUB_DISPATCH_URL != '' && secrets.DISPATCH_KEY != '' }}
-        env:
-          AGENT_HUB_DISPATCH_URL: ${{ secrets.AGENT_HUB_DISPATCH_URL }}
-          DISPATCH_KEY: ${{ secrets.DISPATCH_KEY }}
+        if: ${{ always() && env.AGENT_HUB_DISPATCH_URL != '' && env.DISPATCH_KEY != '' }}
         run: |
           test -n "$AGENT_HUB_DISPATCH_URL"
           test -n "$DISPATCH_KEY"
