@@ -3,7 +3,8 @@
   "private": true,
   "scripts": {
     "test": "playwright test",
-    "test:ui": "playwright test --ui"
+    "test:ui": "playwright test --ui",
+    "test:performance": "k6 run performance/k6/smoke.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1"

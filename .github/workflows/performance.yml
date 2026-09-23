@@ -1,0 +1,236 @@
+name: Performance
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    # Once daily off-peak UTC (03:00)
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      frontend_ref:
+        description: Frontend git ref
+        type: string
+        default: main
+      backend_ref:
+        description: Backend git ref
+        type: string
+        default: main
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: performance-${{ github.workflow }}-${{ github.repository }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  k6:
+    name: k6 performance smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Resolve refs
+        id: refs
+        env:
+          FRONTEND_REF: ${{ inputs.frontend_ref || 'main' }}
+          BACKEND_REF: ${{ inputs.backend_ref || 'main' }}
+        run: |
+          if [ "${GITHUB_REPOSITORY}" = "12masta/example-app-e2e" ]; then
+            echo "e2e=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          else
+            echo "e2e=main" >> "$GITHUB_OUTPUT"
+          fi
+          echo "frontend=${FRONTEND_REF}" >> "$GITHUB_OUTPUT"
+          echo "backend=${BACKEND_REF}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout e2e tests
+        uses: actions/checkout@v7
+        with:
+          repository: 12masta/example-app-e2e
+          ref: ${{ steps.refs.outputs.e2e }}
+          path: e2e
+
+      - name: Checkout frontend
+        uses: actions/checkout@v7
+        with:
+          repository: 12masta/example-app-frontend
+          ref: ${{ steps.refs.outputs.frontend }}
+          path: frontend
+
+      - name: Checkout backend
+        uses: actions/checkout@v7
+        with:
+          repository: 12masta/example-app-backend
+          ref: ${{ steps.refs.outputs.backend }}
+          path: backend
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Setup Node.js yarn cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.302
+
+      - name: Install k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Install e2e dependencies
+        working-directory: e2e
+        run: npm ci
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        env:
+          HUSKY: '0'
+        run: yarn install --frozen-lockfile
+
+      - name: Generate frontend API client
+        working-directory: frontend
+        run: yarn generate
+
+      - name: Start backend
+        working-directory: backend
+        run: |
+          nohup env ASPNETCORE_URLS=http://localhost:5080 \
+            dotnet run --no-launch-profile --project src/Conduit/Conduit.csproj \
+            > "${RUNNER_TEMP}/backend.log" 2>&1 &
+          echo $! > "${RUNNER_TEMP}/backend.pid"
+
+      - name: Wait for backend
+        run: |
+          for i in $(seq 1 90); do
+            if curl -fsS http://localhost:5080/api/tags >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Backend did not become ready"
+          if [ -f "${RUNNER_TEMP}/backend.log" ]; then
+            cat "${RUNNER_TEMP}/backend.log"
+          fi
+          exit 1
+
+      - name: Start frontend
+        working-directory: frontend
+        env:
+          API_URL: http://localhost:5080/api
+          PORT: '30401'
+        run: |
+          nohup yarn start > "${RUNNER_TEMP}/frontend.log" 2>&1 &
+          echo $! > "${RUNNER_TEMP}/frontend.pid"
+
+      - name: Wait for frontend
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:30401 >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Frontend did not become ready"
+          cat "${RUNNER_TEMP}/frontend.log"
+          exit 1
+
+      - name: Run k6 performance smoke
+        id: k6
+        continue-on-error: true
+        working-directory: e2e
+        env:
+          BASE_URL: http://localhost:30401
+          API_URL: http://localhost:5080/api
+        run: |
+          # Background k6 and sampler at top level (not in a subshell) so PIDs stay alive.
+          k6 run performance/k6/smoke.js &
+          K6_PID=$!
+          node performance/scripts/sample-system-metrics.mjs \
+            --output metrics/system.ndjson \
+            --watch-pid "$K6_PID" &
+          SAMPLER_PID=$!
+
+          set +e
+          wait "$K6_PID"
+          K6_EXIT=$?
+          set -e
+
+          kill "$SAMPLER_PID" 2>/dev/null || true
+          wait "$SAMPLER_PID" 2>/dev/null || true
+
+          echo "exit_code=${K6_EXIT}" >> "$GITHUB_OUTPUT"
+          if [ "$K6_EXIT" -eq 0 ]; then
+            echo "conclusion=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "conclusion=failure" >> "$GITHUB_OUTPUT"
+          fi
+          exit "${K6_EXIT}"
+
+      - name: Collect Agent Hub performance artifact
+        if: always()
+        working-directory: e2e
+        run: |
+          mkdir -p agent-hub-artifact/k6 agent-hub-artifact/metrics agent-hub-artifact/logs
+          cp -f k6/summary.json agent-hub-artifact/k6/ 2>/dev/null || true
+          cp -f k6/metric-samples.ndjson agent-hub-artifact/k6/ 2>/dev/null || true
+          cp -f metrics/system.ndjson agent-hub-artifact/metrics/ 2>/dev/null || true
+          if [ -f "${RUNNER_TEMP}/backend.log" ]; then
+            tail -c 524288 "${RUNNER_TEMP}/backend.log" > agent-hub-artifact/logs/backend.log || true
+          fi
+          if [ -f "${RUNNER_TEMP}/frontend.log" ]; then
+            tail -c 524288 "${RUNNER_TEMP}/frontend.log" > agent-hub-artifact/logs/frontend.log || true
+          fi
+
+      - name: Build Agent Hub performance manifest
+        if: always()
+        working-directory: e2e
+        run: |
+          node tools/agent-hub-manifest/build-performance-manifest.mjs \
+            --agent performance-test-analysis \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --workflow "$GITHUB_WORKFLOW" \
+            --job k6 \
+            --commit "$GITHUB_SHA" \
+            --conclusion "${{ steps.k6.outputs.conclusion || job.status }}" \
+            --out-dir agent-hub-artifact
+
+      - name: Upload Agent Hub performance artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-hub-performance-v1
+          path: e2e/agent-hub-artifact
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Dispatch Performance Test Analysis
+        if: ${{ always() && secrets.AGENT_HUB_DISPATCH_URL != '' && secrets.DISPATCH_KEY != '' }}
+        env:
+          AGENT_HUB_DISPATCH_URL: ${{ secrets.AGENT_HUB_DISPATCH_URL }}
+          DISPATCH_KEY: ${{ secrets.DISPATCH_KEY }}
+        run: |
+          test -n "$AGENT_HUB_DISPATCH_URL"
+          test -n "$DISPATCH_KEY"
+          curl -fsS -X POST "$AGENT_HUB_DISPATCH_URL" \
+            -H "x-agent-hub-key: ${DISPATCH_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "{\"agentSlug\":\"performance-test-analysis\",\"source\":{\"type\":\"github-actions\",\"repository\":\"${GITHUB_REPOSITORY}\",\"workflowRunId\":${GITHUB_RUN_ID},\"runAttempt\":${GITHUB_RUN_ATTEMPT},\"artifactName\":\"agent-hub-performance-v1\"}}"
+
+      - name: Exit with k6 status
+        if: always()
+        run: exit ${{ steps.k6.outputs.exit_code || 1 }}

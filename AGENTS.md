@@ -56,7 +56,42 @@ Start the apps yourself before running tests:
 - Backend: `make run-local` in `example-app-backend`
 - Frontend: `yarn install && yarn generate && yarn start` in `example-app-frontend`
 
+## Performance smoke (k6)
+
+Light load against the same local stack as Playwright. Does not start frontend or backend.
+
+Prerequisites: [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/) on your PATH. Defaults match Playwright (`BASE_URL=http://localhost:30401`, `API_URL=http://localhost:5080/api`).
+
+```sh
+# Sample CPU/RSS while k6 runs (optional locally; CI uses the same pattern)
+k6 run performance/k6/smoke.js &
+K6_PID=$!
+node performance/scripts/sample-system-metrics.mjs --output metrics/system.ndjson --watch-pid "$K6_PID" &
+SAMPLER_PID=$!
+wait "$K6_PID"
+kill "$SAMPLER_PID" 2>/dev/null || true
+wait "$SAMPLER_PID" 2>/dev/null || true
+
+# Or run k6 only (writes k6/summary.json under the repo root)
+npm run test:performance
+# equivalent: k6 run performance/k6/smoke.js
+```
+
+Outputs (gitignored):
+
+- `k6/summary.json` - k6 end-of-test summary for Agent Hub
+- `k6/metric-samples.ndjson` - optional bounded metric snapshot lines (disable with `K6_BOUNDED_SAMPLES=0`)
+- `metrics/system.ndjson` - sampler NDJSON `{ ts, name, cpuPct, rssBytes }` for `frontend` and `backend`
+
+The smoke scenario uses 2 VUs for 90 seconds with thresholds on HTTP failures and p95 latency. Set `BASE_URL` / `API_URL` when the stack listens elsewhere.
+
+Sampler CLI: `node performance/scripts/sample-system-metrics.mjs --help`. It discovers frontend/backend processes by listen ports 30401 and 5080 (override with `--frontend-port` / `--backend-port`). Pass `--watch-pid` of the k6 process so sampling stops when the load test finishes; background the sampler at the shell top level (not inside a subshell) so it keeps running until k6 exits.
+
+CI: `.github/workflows/performance.yml` starts the same frontend/backend stack as `e2e.yml`, runs the smoke, uploads `agent-hub-performance-v1`, and dispatches `performance-test-analysis`. Triggers: push to `main`, daily schedule at 03:00 UTC, and `workflow_dispatch`.
+
 ## Agent Hub Integration
+
+### Test results (`e2e.yml`)
 
 This repository produces `agent-hub-test-results-v1` artifacts for the `test-results-analysis` agent after every test run (including failures).
 
@@ -70,11 +105,25 @@ This repository produces `agent-hub-test-results-v1` artifacts for the `test-res
 - `logs/backend.log` - Backend logs (optional, last 512 KB)
 - `logs/frontend.log` - Frontend logs (optional, last 512 KB)
 
-**Required GitHub secrets:**
-- `AGENT_HUB_DISPATCH_URL` - Agent Hub dispatch endpoint (e.g., `https://agent-hub.example.com/api/dispatch/test-results-analysis`)
+### Performance (`performance.yml`)
+
+Produces `agent-hub-performance-v1` for `performance-test-analysis` after every k6 run (including threshold failures).
+
+**Artifact contents:**
+- `analysis-manifest.json` - file inventory with SHA256 hashes and roles
+- `k6/summary.json` - k6 end-of-test summary (required, role `k6-summary`)
+- `metrics/system.ndjson` - frontend/backend CPU/RSS samples (required, role `system-metrics`)
+- `workflow/metadata.json` - GitHub Actions metadata (required)
+- `k6/metric-samples.ndjson` - bounded k6 metric snapshots (optional, role `k6-samples`)
+- `logs/backend.log` / `logs/frontend.log` - bounded process logs (optional)
+
+Dispatch payload uses `artifactName` only (no artifact download URLs). For local Hub demos keep the performance agent profile at `azureEnrichmentEnabled: false` so the Job skips Azure enrichment explicitly.
+
+**Required GitHub secrets (both workflows):**
+- `AGENT_HUB_DISPATCH_URL` - Agent Hub dispatch endpoint (e.g., `https://agent-hub.example.com/api/dispatch/performance-test-analysis`)
 - `DISPATCH_KEY` - Organisation API key for authentication
 
-The workflow dispatches to Agent Hub after artifact upload using `if: always()` to preserve the original test job conclusion. Missing secrets skip dispatch silently.
+Both workflows dispatch after artifact upload when those secrets are set (`if: always() && secrets...`). When the gate is true, empty secret values fail the step. Missing secrets skip the dispatch step.
 
 ## Development Practices
 
