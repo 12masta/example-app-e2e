@@ -8,7 +8,11 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   timeout: 60_000,
   expect: { timeout: 15_000 },
-  reporter: 'html',
+  reporter: [
+    ['html', { open: 'never' }],
+    ['junit', { outputFile: 'test-results/junit.xml' }],
+    ['json', { outputFile: 'test-results/playwright.json' }],
+  ],
   use: {
     baseURL: process.env.BASE_URL ?? 'http://localhost:30401',
     testIdAttribute: 'data-test',
