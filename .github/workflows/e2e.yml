@@ -175,7 +175,9 @@ jobs:
               --output-format cobertura \
               --include-files "${GITHUB_WORKSPACE}/backend/src/Conduit/bin/Release/net10.0/Conduit.dll"
             dotnet-coverage connect --background conduit-e2e \
-              "dotnet run --no-launch-profile --no-build -c Release --project src/Conduit/Conduit.csproj"
+              "dotnet run --no-launch-profile --no-build -c Release --project src/Conduit/Conduit.csproj" \
+              > "${RUNNER_TEMP}/backend.log" 2>&1 &
+            echo $! > "${RUNNER_TEMP}/backend.pid"
           else
             nohup env ASPNETCORE_URLS=http://localhost:5080 \
               dotnet run --no-launch-profile --project src/Conduit/Conduit.csproj \
@@ -225,6 +227,63 @@ jobs:
           API_URL: http://localhost:5080/api
           E2E_JS_COVERAGE: ${{ steps.refs.outputs.cover }}
         run: npx playwright test
+
+      - name: Collect Agent Hub test-results artifact
+        if: always()
+        working-directory: e2e
+        run: |
+          mkdir -p agent-hub-artifact/test-results agent-hub-artifact/workflow agent-hub-artifact/logs
+          cp -f test-results/junit.xml agent-hub-artifact/test-results/ 2>/dev/null || true
+          cp -f test-results/playwright.json agent-hub-artifact/test-results/ 2>/dev/null || true
+          # Copy traces and screenshots when present (bounded to 20 files)
+          find test-results -name '*.zip' -print0 2>/dev/null | head -z -n 20 | xargs -0 -I{} cp {} agent-hub-artifact/test-results/ || true
+          find test-results -name '*.png' -print0 2>/dev/null | head -z -n 20 | xargs -0 -I{} cp {} agent-hub-artifact/test-results/ || true
+          # Capture bounded logs (last 512 KB)
+          if [ -f "${RUNNER_TEMP}/backend.log" ]; then
+            tail -c 524288 "${RUNNER_TEMP}/backend.log" > agent-hub-artifact/logs/backend.log || true
+          fi
+          if [ -f "${RUNNER_TEMP}/frontend.log" ]; then
+            tail -c 524288 "${RUNNER_TEMP}/frontend.log" > agent-hub-artifact/logs/frontend.log || true
+          fi
+
+      - name: Build Agent Hub manifest
+        if: always()
+        working-directory: e2e
+        run: |
+          node tools/agent-hub-manifest/build-test-results-manifest.mjs \
+            --agent test-results-analysis \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --workflow "$GITHUB_WORKFLOW" \
+            --job playwright \
+            --commit "$GITHUB_SHA" \
+            --conclusion "${{ job.status }}" \
+            --out-dir agent-hub-artifact
+
+      - name: Upload Agent Hub test-results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-hub-test-results-v1
+          path: e2e/agent-hub-artifact
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Dispatch Test Results Analysis
+        if: always()
+        env:
+          AGENT_HUB_DISPATCH_URL: ${{ secrets.AGENT_HUB_DISPATCH_URL }}
+          DISPATCH_KEY: ${{ secrets.DISPATCH_KEY }}
+        run: |
+          if [ -z "$AGENT_HUB_DISPATCH_URL" ] || [ -z "$DISPATCH_KEY" ]; then
+            echo "Skipping dispatch: AGENT_HUB_DISPATCH_URL or DISPATCH_KEY not set"
+            exit 0
+          fi
+          curl -fsS -X POST "$AGENT_HUB_DISPATCH_URL" \
+            -H "x-agent-hub-key: ${DISPATCH_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "{\"agentSlug\":\"test-results-analysis\",\"source\":{\"type\":\"github-actions\",\"repository\":\"${GITHUB_REPOSITORY}\",\"workflowRunId\":${GITHUB_RUN_ID},\"runAttempt\":${GITHUB_RUN_ATTEMPT},\"artifactName\":\"agent-hub-test-results-v1\"}}"
 
       - name: Stop API coverage session
         if: ${{ always() && steps.refs.outputs.cover == '1' }}
