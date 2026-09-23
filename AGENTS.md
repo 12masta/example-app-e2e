@@ -64,9 +64,13 @@ Prerequisites: [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/) on yo
 
 ```sh
 # Terminal 1 - sample CPU/RSS while k6 runs (optional locally; CI uses the same pattern)
-K6_PID=$(k6 run performance/k6/smoke.js & echo $!)
-node performance/scripts/sample-system-metrics.mjs --watch-pid "$K6_PID"
+k6 run performance/k6/smoke.js &
+K6_PID=$!
+node performance/scripts/sample-system-metrics.mjs --out metrics/system.ndjson --watch-pid "$K6_PID" &
+SAMPLER_PID=$!
 wait "$K6_PID"
+kill "$SAMPLER_PID" 2>/dev/null || true
+wait "$SAMPLER_PID" 2>/dev/null || true
 
 # Or run k6 only (writes k6/summary.json under the repo root)
 npm run test:performance
@@ -81,7 +85,7 @@ Outputs (gitignored):
 
 The smoke scenario uses 2 VUs for 90 seconds with thresholds on HTTP failures and p95 latency. Set `BASE_URL` / `API_URL` when the stack listens elsewhere.
 
-Sampler CLI: `node performance/scripts/sample-system-metrics.mjs --help`. Pass `--watch-pid` of the k6 process so sampling stops when the load test finishes; the GitHub workflow will start the sampler in the background and stop it after k6.
+Sampler CLI: `node performance/scripts/sample-system-metrics.mjs --help`. It discovers frontend/backend processes by listen ports 30401 and 5080 (override with `--frontend-port` / `--backend-port`). Pass `--watch-pid` of the k6 process so sampling stops when the load test finishes; background the sampler at the shell top level (not inside a subshell) so it keeps running until k6 exits.
 
 ## Agent Hub Integration
 
