@@ -10,6 +10,8 @@ node_modules/
 coverage/
 playwright-report/
 test-results/
+/k6/
+/metrics/
 blob-report/
 playwright/.cache/
 

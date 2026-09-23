@@ -56,6 +56,33 @@ Start the apps yourself before running tests:
 - Backend: `make run-local` in `example-app-backend`
 - Frontend: `yarn install && yarn generate && yarn start` in `example-app-frontend`
 
+## Performance smoke (k6)
+
+Light load against the same local stack as Playwright. Does not start frontend or backend.
+
+Prerequisites: [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/) on your PATH. Defaults match Playwright (`BASE_URL=http://localhost:30401`, `API_URL=http://localhost:5080/api`).
+
+```sh
+# Terminal 1 - sample CPU/RSS while k6 runs (optional locally; CI uses the same pattern)
+K6_PID=$(k6 run performance/k6/smoke.js & echo $!)
+node performance/scripts/sample-system-metrics.mjs --watch-pid "$K6_PID"
+wait "$K6_PID"
+
+# Or run k6 only (writes k6/summary.json under the repo root)
+npm run test:performance
+# equivalent: k6 run performance/k6/smoke.js
+```
+
+Outputs (gitignored):
+
+- `k6/summary.json` - k6 end-of-test summary for Agent Hub
+- `k6/metric-samples.ndjson` - optional bounded metric snapshot lines (disable with `K6_BOUNDED_SAMPLES=0`)
+- `metrics/system.ndjson` - sampler NDJSON `{ ts, name, cpuPct, rssBytes }` for `frontend` and `backend`
+
+The smoke scenario uses 2 VUs for 90 seconds with thresholds on HTTP failures and p95 latency. Set `BASE_URL` / `API_URL` when the stack listens elsewhere.
+
+Sampler CLI: `node performance/scripts/sample-system-metrics.mjs --help`. Pass `--watch-pid` of the k6 process so sampling stops when the load test finishes; the GitHub workflow will start the sampler in the background and stop it after k6.
+
 ## Agent Hub Integration
 
 This repository produces `agent-hub-test-results-v1` artifacts for the `test-results-analysis` agent after every test run (including failures).
