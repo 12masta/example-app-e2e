@@ -56,6 +56,26 @@ Start the apps yourself before running tests:
 - Backend: `make run-local` in `example-app-backend`
 - Frontend: `yarn install && yarn generate && yarn start` in `example-app-frontend`
 
+## Agent Hub Integration
+
+This repository produces `agent-hub-test-results-v1` artifacts for the `test-results-analysis` agent after every test run (including failures).
+
+**Artifact contents:**
+- `analysis-manifest.json` - file inventory with SHA256 hashes and roles
+- `test-results/junit.xml` - JUnit XML report (required)
+- `test-results/playwright.json` - Playwright JSON report (required)
+- `workflow/metadata.json` - GitHub Actions metadata (required)
+- `test-results/*.zip` - Playwright traces (optional, bounded to 20 files)
+- `test-results/*.png` - Screenshots (optional, bounded to 20 files)
+- `logs/backend.log` - Backend logs (optional, last 512 KB)
+- `logs/frontend.log` - Frontend logs (optional, last 512 KB)
+
+**Required GitHub secrets:**
+- `AGENT_HUB_DISPATCH_URL` - Agent Hub dispatch endpoint (e.g., `https://agent-hub.example.com/api/dispatch/test-results-analysis`)
+- `DISPATCH_KEY` - Organisation API key for authentication
+
+The workflow dispatches to Agent Hub after artifact upload using `if: always()` to preserve the original test job conclusion. Missing secrets skip dispatch silently.
+
 ## Development Practices
 
 - Prefer role, placeholder, and heading locators. Use existing `data-test` attributes (for example `article-preview`) when the UI exposes them; do not invent a parallel selector scheme. `playwright.config.ts` maps `getByTestId` to `data-test`.
