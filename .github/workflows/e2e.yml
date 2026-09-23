@@ -271,15 +271,13 @@ jobs:
           retention-days: 14
 
       - name: Dispatch Test Results Analysis
-        if: always()
+        if: ${{ always() && secrets.AGENT_HUB_DISPATCH_URL != '' && secrets.DISPATCH_KEY != '' }}
         env:
           AGENT_HUB_DISPATCH_URL: ${{ secrets.AGENT_HUB_DISPATCH_URL }}
           DISPATCH_KEY: ${{ secrets.DISPATCH_KEY }}
         run: |
-          if [ -z "$AGENT_HUB_DISPATCH_URL" ] || [ -z "$DISPATCH_KEY" ]; then
-            echo "Skipping dispatch: AGENT_HUB_DISPATCH_URL or DISPATCH_KEY not set"
-            exit 0
-          fi
+          test -n "$AGENT_HUB_DISPATCH_URL"
+          test -n "$DISPATCH_KEY"
           curl -fsS -X POST "$AGENT_HUB_DISPATCH_URL" \
             -H "x-agent-hub-key: ${DISPATCH_KEY}" \
             -H "Content-Type: application/json" \
