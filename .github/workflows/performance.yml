@@ -31,6 +31,9 @@ jobs:
     name: k6 performance smoke
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      AGENT_HUB_DISPATCH_URL: ${{ secrets.AGENT_HUB_DISPATCH_URL }}
+      DISPATCH_KEY: ${{ secrets.DISPATCH_KEY }}
 
     steps:
       - name: Resolve refs
@@ -156,6 +159,8 @@ jobs:
           API_URL: http://localhost:5080/api
         run: |
           # Background k6 and sampler at top level (not in a subshell) so PIDs stay alive.
+          # handleSummary writes k6/summary.json relative to this directory.
+          mkdir -p k6 metrics
           k6 run performance/k6/smoke.js &
           K6_PID=$!
           node performance/scripts/sample-system-metrics.mjs \
@@ -219,10 +224,7 @@ jobs:
           retention-days: 14
 
       - name: Dispatch Performance Test Analysis
-        if: ${{ always() && secrets.AGENT_HUB_DISPATCH_URL != '' && secrets.DISPATCH_KEY != '' }}
-        env:
-          AGENT_HUB_DISPATCH_URL: ${{ secrets.AGENT_HUB_DISPATCH_URL }}
-          DISPATCH_KEY: ${{ secrets.DISPATCH_KEY }}
+        if: ${{ always() && env.AGENT_HUB_DISPATCH_URL != '' && env.DISPATCH_KEY != '' }}
         run: |
           test -n "$AGENT_HUB_DISPATCH_URL"
           test -n "$DISPATCH_KEY"
